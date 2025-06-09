@@ -1,0 +1,7 @@
+version: '3'
+
+tasks:
+  # run server
+  run:
+    cmds:
+      - uvicorn main:app

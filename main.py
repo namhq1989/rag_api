@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse
 from app.config import VectorDBType, debug_mode, RAG_HOST, RAG_PORT, CHUNK_SIZE, CHUNK_OVERLAP, PDF_EXTRACT_IMAGES, VECTOR_DB_TYPE, \
     LogMiddleware, logger
 from app.middleware import security_middleware
-from app.routes import document_routes, pgvector_routes
+from app.routes import document_routes, chunk_routes, pgvector_routes
 from app.services.database import PSQLDatabase, ensure_custom_id_index_on_embedding
 
 @asynccontextmanager
@@ -43,6 +43,7 @@ app.state.PDF_EXTRACT_IMAGES = PDF_EXTRACT_IMAGES
 
 # Include routers
 app.include_router(document_routes.router)
+app.include_router(chunk_routes.router)
 if debug_mode:
     app.include_router(router=pgvector_routes.router)
 
