@@ -1,7 +1,14 @@
-version: '3'
+version: "3"
 
 tasks:
   # run server
   run:
     cmds:
       - uvicorn main:app
+
+  # build
+  build:
+    cmds:
+      - docker build -f Dockerfile --platform linux/amd64 -t namhq1989/rag-api:latest -t namhq1989/rag-api:$(git rev-parse --short HEAD) .
+      - docker push namhq1989/rag-api:latest
+      - docker push namhq1989/rag-api:$(git rev-parse --short HEAD)
