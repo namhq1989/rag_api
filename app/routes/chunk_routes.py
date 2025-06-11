@@ -1,6 +1,6 @@
 import traceback
 from typing import List, Dict, Optional
-from fastapi import APIRouter, HTTPException, Request, Body
+from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -13,14 +13,14 @@ from app.config import logger, vector_store
 from app.services.vector_store.async_pg_vector import AsyncPgVector
 
 class ChunkExtractionRequest(BaseModel):
-    file_ids: List[str]
-    max_chunks: int = 50
-    min_chunk_length: int = 100
-    max_chunk_length: int = 1000
-    diversity_weight: float = 0.7  # Balance between relevance and diversity
+    documentIds: List[str]
+    maxChunks: int = 50
+    minChunkLength: int = 100
+    maxChunkLength: int = 1000
+    diversityWeight: float = 0.7  # Balance between relevance and diversity
 
 class ChunkResponse(BaseModel):
-    chunk_id: str
+    chunkId: str
     content: str
     metadata: Dict
     score: float
@@ -28,27 +28,30 @@ class ChunkResponse(BaseModel):
 
 router = APIRouter()
 
-@router.post("/extract-faq-chunks", response_model=List[ChunkResponse])
-async def extract_faq_chunks(
+@router.get("/document-chunks", response_model=List[ChunkResponse])
+async def get_document_chunks(
     request: Request,
-    body: ChunkExtractionRequest = Body(...)
+    documentIds: List[str] = Query(..., description="List of document IDs"),
+    maxChunks: int = Query(50, description="Maximum number of chunks to return"),
+    minChunkLength: int = Query(100, description="Minimum chunk length"),
+    maxChunkLength: int = Query(1000, description="Maximum chunk length"),
+    diversityWeight: float = Query(0.7, description="Balance between relevance and diversity")
 ):
     """
-    Extract the best chunks for FAQ generation using a hybrid strategy:
+    Extract the best document chunks using a hybrid strategy:
     1. Information density (good for questions)
     2. Diversity (covers different topics)
     3. Completeness (self-contained chunks)
     4. Question indicators (chunks that naturally prompt questions)
+    
+    These chunks can be used by other services for FAQ generation.
     """
     
-    user_id = request.state.user.get("id", "public") if hasattr(request.state, "user") else "public"
+    logger.debug(f"Received GET request with params: documentIds={documentIds}, maxChunks={maxChunks}, minChunkLength={minChunkLength}, maxChunkLength={maxChunkLength}, diversityWeight={diversityWeight}")
     
     try:
         # 1. Get all chunks for the specified documents
-        all_chunks = await get_all_chunks_for_files(
-            user_id=user_id,
-            file_ids=body.file_ids
-        )
+        all_chunks = await get_all_chunks_for_documents(document_ids=documentIds)
         
         if not all_chunks:
             raise HTTPException(status_code=404, detail="No chunks found for the specified files")
@@ -60,7 +63,7 @@ async def extract_faq_chunks(
         # 3. Filter chunks by length
         filtered_chunks = [
             chunk for chunk in unique_chunks
-            if body.min_chunk_length <= len(chunk["content"]) <= body.max_chunk_length
+            if minChunkLength <= len(chunk["content"]) <= maxChunkLength
         ]
         
         if not filtered_chunks:
@@ -72,14 +75,14 @@ async def extract_faq_chunks(
         # 5. Select diverse, high-quality chunks
         selected_chunks = select_diverse_chunks(
             scored_chunks,
-            max_chunks=body.max_chunks,
-            diversity_weight=body.diversity_weight
+            max_chunks=maxChunks,
+            diversity_weight=diversityWeight
         )
         
         # 6. Format response
         return [
             ChunkResponse(
-                chunk_id=chunk["id"],
+                chunkId=chunk["id"],
                 content=chunk["content"],
                 metadata=chunk["metadata"],
                 score=chunk["faq_score"],
@@ -92,78 +95,111 @@ async def extract_faq_chunks(
         raise
     except Exception as e:
         logger.error(
-            "Error extracting FAQ chunks | File IDs: %s | Error: %s | Traceback: %s",
-            body.file_ids,
+            "Error retrieving document chunks | Document IDs: %s | Error: %s | Traceback: %s",
+            documentIds,
             str(e),
             traceback.format_exc(),
         )
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def get_all_chunks_for_files(
-    user_id: str,
-    file_ids: List[str]
-) -> List[Dict]:
+# Optional: Add POST endpoint for backwards compatibility if needed
+@router.post("/document-chunks", response_model=List[ChunkResponse])
+async def post_document_chunks(
+    request: Request,
+    chunk_request: ChunkExtractionRequest
+):
     """
-    Retrieve all chunks for given file_ids with metadata
+    POST version of document chunks extraction for backwards compatibility.
+    Delegates to the GET version with extracted parameters.
+    """
+    logger.debug(f"Received POST request with body: {chunk_request}")
+    
+    # Delegate to the GET endpoint logic
+    return await get_document_chunks(
+        request=request,
+        documentIds=chunk_request.documentIds,
+        maxChunks=chunk_request.maxChunks,
+        minChunkLength=chunk_request.minChunkLength,
+        maxChunkLength=chunk_request.maxChunkLength,
+        diversityWeight=chunk_request.diversityWeight
+    )
+
+
+async def get_all_chunks_for_documents(document_ids: List[str]) -> List[Dict]:
+    """
+    Retrieve all chunks for given document_ids with metadata
     """
     chunks = []
+    
+    logger.debug(f"Starting chunk retrieval for document_ids: {document_ids}")
     
     try:
         # For AsyncPgVector, we should use its methods properly
         if isinstance(vector_store, AsyncPgVector):
-            logger.info(f"Using AsyncPgVector query for file_ids: {file_ids}")
+            logger.info(f"Using AsyncPgVector query for document_ids: {document_ids}")
             
-            # AsyncPgVector has a method to get all documents
-            # We can use similarity_search but with a high k value
+            # Query based only on file_id
             filter_dict = {
-                "file_id": {"$in": file_ids},
-                "user_id": user_id
+                "file_id": {"$in": document_ids}
             }
             
+            logger.debug(f"Using filter: {filter_dict}")
+            
             # Instead of empty string, use a common word to avoid empty embedding
-            # This is a workaround but more efficient than direct SQL
             all_docs = await run_in_executor(
                 None,
                 lambda: vector_store.similarity_search_with_score(
-                    query="the",  # Common word instead of empty string
+                    query="document content text",  # More descriptive query
                     k=10000,      # High number to get all
                     filter=filter_dict
                 )
             )
             
+            logger.debug(f"Vector search returned {len(all_docs)} documents")
+            
             # Process results
             seen_contents = set()  # Track unique content
             for idx, (doc, score) in enumerate(all_docs):
-                doc_file_id = doc.metadata.get('file_id')
+                file_id = doc.metadata.get('file_id')
+                
+                logger.debug(f"Processing document {idx}: file_id='{file_id}', score={score}")
+                if idx == 0:  # Log first document metadata for debugging
+                    logger.debug(f"Sample document metadata: {doc.metadata}")
+                    logger.debug(f"Content preview: {doc.page_content[:100]}...")
                 
                 # Skip duplicates based on content
                 content_hash = get_content_hash(doc.page_content)
                 if content_hash in seen_contents:
+                    logger.debug(f"Skipping duplicate content for file_id: {file_id}")
                     continue
                 seen_contents.add(content_hash)
                 
-                if doc_file_id in file_ids:
+                if file_id in document_ids:
                     chunks.append({
-                        "id": f"{doc_file_id}_{idx}",
+                        "id": f"{file_id}_{idx}",
                         "content": doc.page_content,
                         "metadata": doc.metadata,
                         "embedding": None
                     })
+                    logger.info(f"Found matching chunk for file_id: {file_id}, content length: {len(doc.page_content)}")
+                else:
+                    logger.debug(f"file_id '{file_id}' not in target document_ids {document_ids}")
                     
         else:
             # For other vector stores
-            logger.info(f"Using standard similarity search for file_ids: {file_ids}")
+            logger.info(f"Using standard similarity search for document_ids: {document_ids}")
             filter_dict = {
-                "file_id": {"$in": file_ids},
-                "user_id": user_id
+                "file_id": {"$in": document_ids}
             }
             
             all_docs = vector_store.similarity_search_with_score(
-                query="the",  # Common word
+                query="document content text",
                 k=10000,
                 filter=filter_dict
             )
+            
+            logger.debug(f"Standard search returned {len(all_docs)} documents")
             
             # Process results with deduplication
             seen_contents = set()
@@ -173,23 +209,25 @@ async def get_all_chunks_for_files(
                     continue
                 seen_contents.add(content_hash)
                 
-                doc_file_id = doc.metadata.get('file_id')
-                if doc_file_id in file_ids:
+                file_id = doc.metadata.get('file_id')
+                if file_id in document_ids:
                     chunks.append({
-                        "id": f"{doc_file_id}_{idx}",
+                        "id": f"{file_id}_{idx}",
                         "content": doc.page_content,
                         "metadata": doc.metadata,
                         "embedding": None
                     })
+                    logger.info(f"Found matching chunk for file_id: {file_id}")
                     
     except Exception as e:
-        logger.error(f"Error in get_all_chunks_for_files: {str(e)}\n{traceback.format_exc()}")
+        logger.error(f"Error in get_all_chunks_for_documents: {str(e)}\n{traceback.format_exc()}")
         raise
     
     if not chunks:
-        logger.warning(f"No chunks found for file_ids {file_ids} and user_id {user_id}")
+        logger.warning(f"No chunks found for document_ids {document_ids}")
+        logger.warning("Check if the documents were properly embedded in the vector store")
     else:
-        logger.info(f"Found {len(chunks)} unique chunks for file_ids {file_ids}")
+        logger.info(f"Found {len(chunks)} unique chunks for document_ids {document_ids}")
     
     return chunks
 
@@ -436,100 +474,16 @@ def select_diverse_chunks(
     return selected_chunks
 
 
-@router.post("/analyze-chunks")
-async def analyze_chunks_for_faq(
-    request: Request,
-    body: ChunkExtractionRequest = Body(...)
-):
-    """
-    Analyze chunks and provide statistics about FAQ suitability
-    """
-    user_id = request.state.user.get("id", "public") if hasattr(request.state, "user") else "public"
-    
-    try:
-        # Get all chunks
-        all_chunks = await get_all_chunks_for_files(
-            user_id=user_id,
-            file_ids=body.file_ids
-        )
-        
-        if not all_chunks:
-            return {
-                "total_chunks": 0,
-                "scored_chunks": 0,
-                "score_distribution": {},
-                "characteristics_analysis": {},
-                "recommended_chunk_count": 0,
-                "message": "No chunks found for the specified files"
-            }
-        
-        # Deduplicate first
-        unique_chunks = deduplicate_chunks(all_chunks)
-        
-        # Score chunks
-        scored_chunks = score_chunks_for_faq(unique_chunks)
-        
-        # Calculate statistics
-        scores = [chunk["faq_score"] for chunk in scored_chunks]
-        characteristics_avg = {}
-        
-        if scored_chunks:
-            for key in scored_chunks[0]["characteristics"]:
-                values = [chunk["characteristics"][key] for chunk in scored_chunks]
-                characteristics_avg[key] = {
-                    "mean": float(np.mean(values)),
-                    "std": float(np.std(values)),
-                    "min": float(np.min(values)),
-                    "max": float(np.max(values))
-                }
-        
-        return {
-            "total_chunks": len(all_chunks),
-            "unique_chunks": len(unique_chunks),
-            "scored_chunks": len(scored_chunks),
-            "score_distribution": {
-                "mean": float(np.mean(scores)) if scores else 0,
-                "std": float(np.std(scores)) if scores else 0,
-                "min": float(np.min(scores)) if scores else 0,
-                "max": float(np.max(scores)) if scores else 0,
-                "percentiles": {
-                    "25": float(np.percentile(scores, 25)) if scores else 0,
-                    "50": float(np.percentile(scores, 50)) if scores else 0,
-                    "75": float(np.percentile(scores, 75)) if scores else 0,
-                    "90": float(np.percentile(scores, 90)) if scores else 0
-                }
-            },
-            "characteristics_analysis": characteristics_avg,
-            "recommended_chunk_count": min(
-                max(10, int(len(scored_chunks) * 0.2)),  # 20% of chunks
-                50  # Cap at 50
-            ),
-            "duplicate_ratio": 1 - (len(unique_chunks) / len(all_chunks)) if all_chunks else 0
-        }
-        
-    except Exception as e:
-        logger.error(
-            "Error analyzing chunks | File IDs: %s | Error: %s | Traceback: %s",
-            body.file_ids,
-            str(e),
-            traceback.format_exc(),
-        )
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 # Debug endpoint to understand vector store structure
 @router.get("/debug/vector-store-info")
 async def get_vector_store_info(request: Request):
     """
     Debug endpoint to inspect vector store configuration
     """
-    user_id = request.state.user.get("id", "public") if hasattr(request.state, "user") else "public"
-    
     info = {
         "vector_store_type": str(type(vector_store)),
         "attributes": [attr for attr in dir(vector_store) if not attr.startswith('_')],
-        "has_async_methods": hasattr(vector_store, 'asimilarity_search'),
-        "user_id": user_id
+        "has_async_methods": hasattr(vector_store, 'asimilarity_search')
     }
     
     # Check for specific attributes
