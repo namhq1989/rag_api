@@ -3,6 +3,7 @@ from typing import List, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel
 import numpy as np
+from app.routes.document_routes import get_cached_query_embedding
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import re
@@ -495,3 +496,232 @@ async def get_vector_store_info(request: Request):
         info['has_embedding_function'] = True
         
     return info
+
+
+@router.get("/project-chat-query", response_model=List[str])
+async def project_chat_query(
+    request: Request,
+    documentIds: List[str] = Query(..., description="List of document IDs for the project"),
+    query: str = Query(..., description="User query for chat"),
+):
+    """
+    Query document chunks for chat responses within a specific project.
+    Optimized for conversational AI - returns minimal data for LLM processing.
+    
+    Fixed parameters:
+    - maxChunks: 3
+    - minChunkLength: 50
+    - maxChunkLength: 1500
+    """
+    
+    # Fixed parameters
+    MAX_CHUNKS = 3
+    MIN_CHUNK_LENGTH = 50
+    MAX_CHUNK_LENGTH = 1500
+    
+    logger.info(f"=== PROJECT CHAT QUERY START ===")
+    logger.info(f"Query: '{query}'")
+    logger.info(f"Document IDs: {documentIds}")
+    logger.info(f"Document count: {len(documentIds)}")
+    
+    try:
+        # 1. Get query embedding (reuse existing cached function)
+        logger.debug("Step 1: Getting query embedding...")
+        query_embedding = get_cached_query_embedding(query)
+        logger.info(f"Query embedding obtained, length: {len(query_embedding) if query_embedding else 'None'}")
+        
+        # 2. Perform similarity search across project files
+        logger.debug("Step 2: Performing similarity search...")
+        logger.info(f"Vector store type: {type(vector_store)}")
+        logger.info(f"Using filter: custom_id in {documentIds}")
+        
+        if isinstance(vector_store, AsyncPgVector):
+            logger.debug("Using AsyncPgVector similarity search")
+            # Use the indexed custom_id column for efficient filtering
+            documents_with_scores = await run_in_executor(
+                None,
+                vector_store.similarity_search_with_score_by_vector,
+                query_embedding,
+                k=MAX_CHUNKS * 3,  # Get more initially for filtering
+                filter={"custom_id": {"$in": documentIds}}
+            )
+        else:
+            logger.debug("Using standard vector store similarity search")
+            documents_with_scores = vector_store.similarity_search_with_score_by_vector(
+                query_embedding,
+                k=MAX_CHUNKS * 3,
+                filter={"custom_id": {"$in": documentIds}}
+            )
+        
+        logger.info(f"Similarity search returned {len(documents_with_scores)} documents")
+        
+        if not documents_with_scores:
+            logger.warning(f"No chunks found for project documentIds: {documentIds}")
+            logger.warning("This could mean:")
+            logger.warning("1. Documents weren't embedded with these custom_ids")
+            logger.warning("2. Vector store filter isn't working correctly")
+            logger.warning("3. Documents exist but don't match the query")
+            return []
+        
+        # Log first few results for debugging
+        for i, (doc, score) in enumerate(documents_with_scores[:3]):
+            logger.debug(f"Document {i}: custom_id='{doc.metadata.get('custom_id', 'NOT_SET')}', "
+                        f"file_id='{doc.metadata.get('file_id', 'NOT_SET')}', "
+                        f"score={score}, content_length={len(doc.page_content)}")
+            logger.debug(f"Content preview: {doc.page_content[:100]}...")
+        
+        # 3. Process and score chunks for chat suitability
+        logger.debug("Step 3: Processing and scoring chunks...")
+        chat_chunks = []
+        seen_content_hashes = set()
+        length_filtered_count = 0
+        duplicate_filtered_count = 0
+        
+        for idx, (document, similarity_score) in enumerate(documents_with_scores):
+            content = document.page_content
+            metadata = document.metadata or {}
+            custom_id = metadata.get('custom_id', 'unknown')
+            file_id = metadata.get('file_id', 'unknown')
+            
+            logger.debug(f"Processing chunk {idx}: custom_id='{custom_id}', file_id='{file_id}', "
+                        f"content_length={len(content)}, similarity_score={similarity_score}")
+            
+            # Filter by length
+            if not (MIN_CHUNK_LENGTH <= len(content) <= MAX_CHUNK_LENGTH):
+                length_filtered_count += 1
+                logger.debug(f"Chunk {idx} filtered by length: {len(content)} not in range [{MIN_CHUNK_LENGTH}, {MAX_CHUNK_LENGTH}]")
+                continue
+            
+            # Deduplicate based on content
+            content_hash = get_content_hash(content)
+            if content_hash in seen_content_hashes:
+                duplicate_filtered_count += 1
+                logger.debug(f"Chunk {idx} filtered as duplicate content")
+                continue
+            seen_content_hashes.add(content_hash)
+            
+            # Calculate chat relevance score
+            chat_score = calculate_chat_relevance_score(
+                content=content,
+                query=query,
+                similarity_score=similarity_score
+            )
+            
+            logger.debug(f"Chunk {idx} scored: relevance_score={chat_score}")
+            
+            chat_chunks.append({
+                "content": content,
+                "relevanceScore": chat_score,
+                "similarity_score": similarity_score,  # Keep for sorting
+                "custom_id": custom_id,
+                "file_id": file_id
+            })
+        
+        logger.info(f"Chunk processing summary:")
+        logger.info(f"  Total retrieved: {len(documents_with_scores)}")
+        logger.info(f"  Length filtered: {length_filtered_count}")
+        logger.info(f"  Duplicate filtered: {duplicate_filtered_count}")
+        logger.info(f"  Final chunks: {len(chat_chunks)}")
+        
+        if not chat_chunks:
+            logger.warning("No chunks passed filtering! Check length and duplication filters.")
+            return []
+        
+        # 4. Sort by relevance and select top chunks
+        logger.debug("Step 4: Sorting and selecting top chunks...")
+        chat_chunks.sort(key=lambda x: x["relevanceScore"], reverse=True)
+        selected_chunks = chat_chunks[:MAX_CHUNKS]
+        
+        logger.info(f"Selected {len(selected_chunks)} top chunks:")
+        for i, chunk in enumerate(selected_chunks):
+            logger.info(f"  Chunk {i}: relevance_score={chunk['relevanceScore']}, "
+                       f"custom_id='{chunk['custom_id']}', content_length={len(chunk['content'])}")
+            logger.debug(f"  Content preview: {chunk['content'][:100]}...")
+        
+        # 5. Format response (just content strings)
+        result = [chunk["content"] for chunk in selected_chunks]
+        logger.info(f"=== PROJECT CHAT QUERY SUCCESS: Returning {len(result)} content strings ===")
+        return result
+        
+    except HTTPException:
+        logger.error("HTTPException in project_chat_query")
+        raise
+    except Exception as e:
+        logger.error(
+            "Error in project chat query | Document IDs: %s | Query: %s | Error: %s | Traceback: %s",
+            len(documentIds),
+            query[:100],
+            str(e),
+            traceback.format_exc(),
+        )
+        raise HTTPException(status_code=500, detail=f"Project chat query failed: {str(e)}")
+
+
+def calculate_chat_relevance_score(content: str, query: str, similarity_score: float) -> float:
+    """
+    Calculate relevance score specifically for chat responses.
+    Combines semantic similarity with chat-specific factors.
+    """
+    
+    # Base score from semantic similarity (0.0 to 1.0, higher is better)
+    # Note: similarity_score from vector search is distance (lower is better)
+    # Convert to similarity score (higher is better)
+    semantic_score = max(0, 1.0 - similarity_score) if similarity_score <= 1.0 else 1.0 / (1.0 + similarity_score)
+    
+    # Chat-specific scoring factors
+    query_lower = query.lower()
+    content_lower = content.lower()
+    
+    # 1. Direct keyword overlap
+    query_words = set(query_lower.split())
+    content_words = set(content_lower.split())
+    keyword_overlap = len(query_words.intersection(content_words)) / max(len(query_words), 1)
+    
+    # 2. Question answering indicators
+    qa_indicators = [
+        r'\b(what|why|how|when|where|who|which)\b',
+        r'\b(is|are|can|should|must|will|does|do)\b',
+        r'\b(definition|meaning|purpose|explanation)\b',
+        r'\b(example|for instance|such as)\b',
+        r'\b(because|therefore|thus|hence|so)\b',
+        r'\b(first|second|third|finally|then|next)\b',  # Step indicators
+        r'\b(important|key|main|primary|essential)\b'
+    ]
+    
+    qa_score = 0
+    for pattern in qa_indicators:
+        if re.search(pattern, content_lower):
+            qa_score += 1
+    qa_score = min(qa_score / len(qa_indicators), 1.0)
+    
+    # 3. Completeness indicators (good for standalone answers)
+    completeness_patterns = [
+        r'[.!?]\s+[A-Z]',  # Multiple sentences
+        r'\b(however|but|although|while)\b',  # Contrasting information
+        r'\b(additionally|furthermore|moreover|also)\b',  # Additional information
+        r':\s*\n',  # Definitions or lists
+        r'\b\d+[.)]\s',  # Numbered lists
+        r'[•\-*]\s'  # Bullet points
+    ]
+    
+    completeness_score = 0
+    for pattern in completeness_patterns:
+        if re.search(pattern, content):
+            completeness_score += 1
+    completeness_score = min(completeness_score / len(completeness_patterns), 1.0)
+    
+    # 4. Length penalty for very short or very long chunks
+    optimal_length = 400  # Target chunk length for chat (reduced from 800)
+    length_penalty = 1.0 - abs(len(content) - optimal_length) / optimal_length
+    length_penalty = max(0.5, length_penalty)  # Don't penalize too heavily
+    
+    # Combine scores with weights optimized for chat
+    final_score = (
+        semantic_score * 0.4 +           # Semantic similarity is most important
+        keyword_overlap * 0.25 +         # Direct keyword match
+        qa_score * 0.20 +               # QA indicators
+        completeness_score * 0.10 +     # Completeness
+        length_penalty * 0.05           # Length optimization
+    )
+    
+    return round(final_score, 4)
