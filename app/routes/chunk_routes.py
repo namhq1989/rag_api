@@ -36,7 +36,8 @@ async def get_document_chunks(
     maxChunks: int = Query(50, description="Maximum number of chunks to return"),
     minChunkLength: int = Query(100, description="Minimum chunk length"),
     maxChunkLength: int = Query(1000, description="Maximum chunk length"),
-    diversityWeight: float = Query(0.7, description="Balance between relevance and diversity")
+    diversityWeight: float = Query(0.7, description="Balance between relevance and diversity"),
+    query: Optional[str] = Query(None, description="Optional query to filter chunks")
 ):
     """
     Extract the best document chunks using a hybrid strategy:
@@ -52,7 +53,7 @@ async def get_document_chunks(
     
     try:
         # 1. Get all chunks for the specified documents
-        all_chunks = await get_all_chunks_for_documents(document_ids=documentIds)
+        all_chunks = await get_all_chunks_for_documents(document_ids=documentIds, query=query)
         
         if not all_chunks:
             raise HTTPException(status_code=404, detail="No chunks found for the specified files")
@@ -104,30 +105,10 @@ async def get_document_chunks(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Optional: Add POST endpoint for backwards compatibility if needed
-@router.post("/document-chunks", response_model=List[ChunkResponse])
-async def post_document_chunks(
-    request: Request,
-    chunk_request: ChunkExtractionRequest
-):
-    """
-    POST version of document chunks extraction for backwards compatibility.
-    Delegates to the GET version with extracted parameters.
-    """
-    logger.debug(f"Received POST request with body: {chunk_request}")
-    
-    # Delegate to the GET endpoint logic
-    return await get_document_chunks(
-        request=request,
-        documentIds=chunk_request.documentIds,
-        maxChunks=chunk_request.maxChunks,
-        minChunkLength=chunk_request.minChunkLength,
-        maxChunkLength=chunk_request.maxChunkLength,
-        diversityWeight=chunk_request.diversityWeight
-    )
 
 
-async def get_all_chunks_for_documents(document_ids: List[str]) -> List[Dict]:
+
+async def get_all_chunks_for_documents(document_ids: List[str], query: Optional[str] = None) -> List[Dict]:
     """
     Retrieve all chunks for given document_ids with metadata
     """
@@ -147,11 +128,13 @@ async def get_all_chunks_for_documents(document_ids: List[str]) -> List[Dict]:
             
             logger.debug(f"Using filter: {filter_dict}")
             
-            # Instead of empty string, use a common word to avoid empty embedding
+            # Use the provided query if available, otherwise use a default query that doesn't filter
+            search_query = query if query else ""  # Empty string for no specific filtering
+            
             all_docs = await run_in_executor(
                 None,
                 lambda: vector_store.similarity_search_with_score(
-                    query="document content text",  # More descriptive query
+                    query=search_query,
                     k=10000,      # High number to get all
                     filter=filter_dict
                 )
@@ -194,8 +177,11 @@ async def get_all_chunks_for_documents(document_ids: List[str]) -> List[Dict]:
                 "file_id": {"$in": document_ids}
             }
             
+            # Use the provided query if available, otherwise use a default query that doesn't filter
+            search_query = query if query else ""
+            
             all_docs = vector_store.similarity_search_with_score(
-                query="document content text",
+                query=search_query,
                 k=10000,
                 filter=filter_dict
             )
@@ -533,7 +519,7 @@ async def project_chat_query(
         # 2. Perform similarity search across project files
         logger.debug("Step 2: Performing similarity search...")
         logger.info(f"Vector store type: {type(vector_store)}")
-        logger.info(f"Using filter: custom_id in {documentIds}")
+        logger.info(f"Using filter: file_id in {documentIds}")
         
         if isinstance(vector_store, AsyncPgVector):
             logger.debug("Using AsyncPgVector similarity search")
@@ -543,14 +529,14 @@ async def project_chat_query(
                 vector_store.similarity_search_with_score_by_vector,
                 query_embedding,
                 k=MAX_CHUNKS * 3,  # Get more initially for filtering
-                filter={"custom_id": {"$in": documentIds}}
+                filter={"file_id": {"$in": documentIds}}
             )
         else:
             logger.debug("Using standard vector store similarity search")
             documents_with_scores = vector_store.similarity_search_with_score_by_vector(
                 query_embedding,
                 k=MAX_CHUNKS * 3,
-                filter={"custom_id": {"$in": documentIds}}
+                filter={"file_id": {"$in": documentIds}}
             )
         
         logger.info(f"Similarity search returned {len(documents_with_scores)} documents")
