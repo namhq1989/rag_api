@@ -50,6 +50,9 @@ if not os.path.exists(RAG_UPLOAD_DIR):
 VECTOR_DB_TYPE = VectorDBType(
     get_env_variable("VECTOR_DB_TYPE", VectorDBType.PGVECTOR.value)
 )
+POSTGRES_USE_UNIX_SOCKET = (
+    get_env_variable("POSTGRES_USE_UNIX_SOCKET", "False").lower() == "true"
+)
 POSTGRES_DB = get_env_variable("POSTGRES_DB", "mydatabase")
 POSTGRES_USER = get_env_variable("POSTGRES_USER", "myuser")
 POSTGRES_PASSWORD = get_env_variable("POSTGRES_PASSWORD", "mypassword")
@@ -69,8 +72,13 @@ CHUNK_OVERLAP = int(get_env_variable("CHUNK_OVERLAP", "100"))
 env_value = get_env_variable("PDF_EXTRACT_IMAGES", "False").lower()
 PDF_EXTRACT_IMAGES = True if env_value == "true" else False
 
-CONNECTION_STRING = f"postgresql+psycopg2://{urllib.parse.quote_plus(POSTGRES_USER)}:{urllib.parse.quote_plus(POSTGRES_PASSWORD)}@{DB_HOST}:{DB_PORT}/{urllib.parse.quote_plus(POSTGRES_DB)}"
-DSN = f"postgresql://{urllib.parse.quote_plus(POSTGRES_USER)}:{urllib.parse.quote_plus(POSTGRES_PASSWORD)}@{DB_HOST}:{DB_PORT}/{urllib.parse.quote_plus(POSTGRES_DB)}"
+if POSTGRES_USE_UNIX_SOCKET:
+    connection_suffix = f"{urllib.parse.quote_plus(POSTGRES_USER)}:{urllib.parse.quote_plus(POSTGRES_PASSWORD)}@/{urllib.parse.quote_plus(POSTGRES_DB)}?host={urllib.parse.quote_plus(DB_HOST)}"
+else:
+    connection_suffix = f"{urllib.parse.quote_plus(POSTGRES_USER)}:{urllib.parse.quote_plus(POSTGRES_PASSWORD)}@{DB_HOST}:{DB_PORT}/{urllib.parse.quote_plus(POSTGRES_DB)}"
+
+CONNECTION_STRING = f"postgresql+psycopg2://{connection_suffix}"
+DSN = f"postgresql://{connection_suffix}"
 
 ## Logging
 
@@ -178,7 +186,10 @@ HF_TOKEN = get_env_variable("HF_TOKEN", "")
 OLLAMA_BASE_URL = get_env_variable("OLLAMA_BASE_URL", "http://ollama:11434")
 AWS_ACCESS_KEY_ID = get_env_variable("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = get_env_variable("AWS_SECRET_ACCESS_KEY", "")
+AWS_SESSION_TOKEN = get_env_variable("AWS_SESSION_TOKEN", "")
 GOOGLE_APPLICATION_CREDENTIALS = get_env_variable("GOOGLE_APPLICATION_CREDENTIALS", "")
+env_value = get_env_variable("RAG_CHECK_EMBEDDING_CTX_LENGTH", "True").lower()
+RAG_CHECK_EMBEDDING_CTX_LENGTH = True if env_value == "true" else False
 
 ## Embeddings
 
@@ -193,6 +204,7 @@ def init_embeddings(provider, model):
             openai_api_base=RAG_OPENAI_BASEURL,
             openai_proxy=RAG_OPENAI_PROXY,
             chunk_size=EMBEDDINGS_CHUNK_SIZE,
+            check_embedding_ctx_length=RAG_CHECK_EMBEDDING_CTX_LENGTH,
         )
     elif provider == EmbeddingsProvider.AZURE:
         from langchain_openai import AzureOpenAIEmbeddings
@@ -203,6 +215,7 @@ def init_embeddings(provider, model):
             azure_endpoint=RAG_AZURE_OPENAI_ENDPOINT,
             api_version=RAG_AZURE_OPENAI_API_VERSION,
             chunk_size=EMBEDDINGS_CHUNK_SIZE,
+            check_embedding_ctx_length=RAG_CHECK_EMBEDDING_CTX_LENGTH,
         )
     elif provider == EmbeddingsProvider.HUGGINGFACE:
         from langchain_huggingface import HuggingFaceEmbeddings
@@ -225,11 +238,16 @@ def init_embeddings(provider, model):
     elif provider == EmbeddingsProvider.BEDROCK:
         from langchain_aws import BedrockEmbeddings
 
-        session = boto3.Session(
-            aws_access_key_id=AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-            region_name=AWS_DEFAULT_REGION,
-        )
+        session_kwargs = {
+            "aws_access_key_id": AWS_ACCESS_KEY_ID,
+            "aws_secret_access_key": AWS_SECRET_ACCESS_KEY,
+            "region_name": AWS_DEFAULT_REGION,
+        }
+
+        if AWS_SESSION_TOKEN:
+            session_kwargs["aws_session_token"] = AWS_SESSION_TOKEN
+
+        session = boto3.Session(**session_kwargs)
         return BedrockEmbeddings(
             client=session.client("bedrock-runtime"),
             model_id=model,
