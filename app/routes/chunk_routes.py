@@ -49,7 +49,7 @@ async def get_document_chunks(
     These chunks can be used by other services for FAQ generation.
     """
     
-    logger.debug(f"Received GET request with params: documentIds={documentIds}, maxChunks={maxChunks}, minChunkLength={minChunkLength}, maxChunkLength={maxChunkLength}, diversityWeight={diversityWeight}")
+    # logger.debug(f"Received GET request with params: documentIds={documentIds}, maxChunks={maxChunks}, minChunkLength={minChunkLength}, maxChunkLength={maxChunkLength}, diversityWeight={diversityWeight}")
     
     try:
         # 1. Get all chunks for the specified documents
@@ -60,7 +60,7 @@ async def get_document_chunks(
 
         # 2. Deduplicate chunks FIRST
         unique_chunks = deduplicate_chunks(all_chunks)
-        logger.info(f"Reduced {len(all_chunks)} chunks to {len(unique_chunks)} unique chunks")
+        # logger.info(f"Reduced {len(all_chunks)} chunks to {len(unique_chunks)} unique chunks")
         
         # 3. Filter chunks by length
         filtered_chunks = [
@@ -96,12 +96,12 @@ async def get_document_chunks(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            "Error retrieving document chunks | Document IDs: %s | Error: %s | Traceback: %s",
-            documentIds,
-            str(e),
-            traceback.format_exc(),
-        )
+        # logger.error(
+        #     "Error retrieving document chunks | Document IDs: %s | Error: %s | Traceback: %s",
+        #     documentIds,
+        #     str(e),
+        #     traceback.format_exc(),
+        # )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -114,19 +114,19 @@ async def get_all_chunks_for_documents(document_ids: List[str], query: Optional[
     """
     chunks = []
     
-    logger.debug(f"Starting chunk retrieval for document_ids: {document_ids}")
+    # logger.debug(f"Starting chunk retrieval for document_ids: {document_ids}")
     
     try:
         # For AsyncPgVector, we should use its methods properly
         if isinstance(vector_store, AsyncPgVector):
-            logger.info(f"Using AsyncPgVector query for document_ids: {document_ids}")
+            # logger.info(f"Using AsyncPgVector query for document_ids: {document_ids}")
             
             # Query based only on file_id
             filter_dict = {
                 "file_id": {"$in": document_ids}
             }
             
-            logger.debug(f"Using filter: {filter_dict}")
+            # logger.debug(f"Using filter: {filter_dict}")
             
             # Use the provided query if available, otherwise use a default query that doesn't filter
             search_query = query if query else ""  # Empty string for no specific filtering
@@ -140,22 +140,22 @@ async def get_all_chunks_for_documents(document_ids: List[str], query: Optional[
                 )
             )
             
-            logger.debug(f"Vector search returned {len(all_docs)} documents")
+            # logger.debug(f"Vector search returned {len(all_docs)} documents")
             
             # Process results
             seen_contents = set()  # Track unique content
             for idx, (doc, score) in enumerate(all_docs):
                 file_id = doc.metadata.get('file_id')
                 
-                logger.debug(f"Processing document {idx}: file_id='{file_id}', score={score}")
-                if idx == 0:  # Log first document metadata for debugging
-                    logger.debug(f"Sample document metadata: {doc.metadata}")
-                    logger.debug(f"Content preview: {doc.page_content[:100]}...")
+                # logger.debug(f"Processing document {idx}: file_id='{file_id}', score={score}")
+                # if idx == 0:  # Log first document metadata for debugging
+                #     logger.debug(f"Sample document metadata: {doc.metadata}")
+                #     logger.debug(f"Content preview: {doc.page_content[:100]}...")
                 
                 # Skip duplicates based on content
                 content_hash = get_content_hash(doc.page_content)
                 if content_hash in seen_contents:
-                    logger.debug(f"Skipping duplicate content for file_id: {file_id}")
+                    # logger.debug(f"Skipping duplicate content for file_id: {file_id}")
                     continue
                 seen_contents.add(content_hash)
                 
@@ -166,13 +166,14 @@ async def get_all_chunks_for_documents(document_ids: List[str], query: Optional[
                         "metadata": doc.metadata,
                         "embedding": None
                     })
-                    logger.info(f"Found matching chunk for file_id: {file_id}, content length: {len(doc.page_content)}")
+                    # logger.info(f"Found matching chunk for file_id: {file_id}, content length: {len(doc.page_content)}")
                 else:
-                    logger.debug(f"file_id '{file_id}' not in target document_ids {document_ids}")
+                    # logger.debug(f"file_id '{file_id}' not in target document_ids {document_ids}")
+                    pass
                     
         else:
             # For other vector stores
-            logger.info(f"Using standard similarity search for document_ids: {document_ids}")
+            # logger.info(f"Using standard similarity search for document_ids: {document_ids}")
             filter_dict = {
                 "file_id": {"$in": document_ids}
             }
@@ -186,7 +187,7 @@ async def get_all_chunks_for_documents(document_ids: List[str], query: Optional[
                 filter=filter_dict
             )
             
-            logger.debug(f"Standard search returned {len(all_docs)} documents")
+            # logger.debug(f"Standard search returned {len(all_docs)} documents")
             
             # Process results with deduplication
             seen_contents = set()
@@ -204,17 +205,19 @@ async def get_all_chunks_for_documents(document_ids: List[str], query: Optional[
                         "metadata": doc.metadata,
                         "embedding": None
                     })
-                    logger.info(f"Found matching chunk for file_id: {file_id}")
+                    # logger.info(f"Found matching chunk for file_id: {file_id}")
                     
     except Exception as e:
-        logger.error(f"Error in get_all_chunks_for_documents: {str(e)}\n{traceback.format_exc()}")
+        # logger.error(f"Error in get_all_chunks_for_documents: {str(e)}\n{traceback.format_exc()}")
         raise
     
     if not chunks:
-        logger.warning(f"No chunks found for document_ids {document_ids}")
-        logger.warning("Check if the documents were properly embedded in the vector store")
+        # logger.warning(f"No chunks found for document_ids {document_ids}")
+        # logger.warning("Check if the documents were properly embedded in the vector store")
+        pass
     else:
-        logger.info(f"Found {len(chunks)} unique chunks for document_ids {document_ids}")
+        # logger.info(f"Found {len(chunks)} unique chunks for document_ids {document_ids}")
+        pass
     
     return chunks
 
@@ -275,11 +278,11 @@ def deduplicate_chunks(chunks: List[Dict], similarity_threshold: float = 0.95) -
                 best_idx = group[0]
             unique_chunks.append(chunks[best_idx])
         
-        logger.info(f"Deduplication: {len(chunks)} -> {len(unique_chunks)} chunks")
+        # logger.info(f"Deduplication: {len(chunks)} -> {len(unique_chunks)} chunks")
         return unique_chunks
         
     except Exception as e:
-        logger.error(f"Error in deduplication: {str(e)}")
+        # logger.error(f"Error in deduplication: {str(e)}")
         # Fallback: return original chunks
         return chunks
 
@@ -483,7 +486,6 @@ async def get_vector_store_info(request: Request):
         
     return info
 
-
 @router.get("/project-chat-query", response_model=List[str])
 async def project_chat_query(
     request: Request,
@@ -498,6 +500,8 @@ async def project_chat_query(
     - maxChunks: 3
     - minChunkLength: 50
     - maxChunkLength: 1500
+    
+    NO CACHING - Fresh embeddings every time
     """
     
     # Fixed parameters
@@ -505,149 +509,377 @@ async def project_chat_query(
     MIN_CHUNK_LENGTH = 50
     MAX_CHUNK_LENGTH = 1500
     
-    logger.info(f"=== PROJECT CHAT QUERY START ===")
-    logger.info(f"Query: '{query}'")
-    logger.info(f"Document IDs: {documentIds}")
-    logger.info(f"Document count: {len(documentIds)}")
+    # logger.info(f"=== PROJECT CHAT QUERY START ===")
+    # logger.info(f"Query: '{query}'")
+    # logger.info(f"Document IDs: {documentIds}")
+    # logger.info(f"Document count: {len(documentIds)}")
     
     try:
-        # 1. Get query embedding (reuse existing cached function)
-        logger.debug("Step 1: Getting query embedding...")
-        query_embedding = get_cached_query_embedding(query)
-        logger.info(f"Query embedding obtained, length: {len(query_embedding) if query_embedding else 'None'}")
+        # 1. Handle empty query
+        if not query or query.strip() == "":
+            # logger.info("Empty query detected - using default search query")
+            search_query = "document content"
+        else:
+            search_query = query
         
-        # 2. Perform similarity search across project files
-        logger.debug("Step 2: Performing similarity search...")
-        logger.info(f"Vector store type: {type(vector_store)}")
-        logger.info(f"Using filter: file_id in {documentIds}")
+        # 2. Get query embedding (NO CACHING - fresh embedding every time)
+        # logger.debug("Step 1: Getting fresh query embedding...")
+        # logger.info(f"Getting fresh embedding for: '{search_query}'")
+        
+        # Try multiple methods to get fresh embedding
+        query_embedding = None
+        
+        # Method 1: Try vector store's embedding service
+        if hasattr(vector_store, 'embeddings') and vector_store.embeddings:
+            # logger.info("Using vector store's embedding service")
+            try:
+                query_embedding = vector_store.embeddings.embed_query(search_query)
+                # logger.info("Successfully got embedding from vector store")
+            except Exception as e:
+                # logger.error(f"Vector store embedding failed: {e}")
+                pass
+        
+        # Method 2: Try from config
+        if not query_embedding:
+            # logger.info("Trying to get embedding service from config")
+            try:
+                from app.config import embeddings
+                query_embedding = embeddings.embed_query(search_query)
+                # logger.info("Successfully got embedding from config")
+            except Exception as e:
+                # logger.error(f"Config embedding failed: {e}")
+                pass
+        
+        # Method 3: Direct OpenAI API call (fallback)
+        if not query_embedding:
+            # logger.info("Trying direct OpenAI API call for embedding")
+            try:
+                import openai
+                import os
+                
+                # Get OpenAI client
+                client = openai.AzureOpenAI(
+                    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                    api_version="2023-05-15",
+                    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+                )
+                
+                # Get embedding directly
+                response = client.embeddings.create(
+                    input=search_query,
+                    model="text-embedding-3-small"  # or your embedding model
+                )
+                
+                query_embedding = response.data[0].embedding
+                # logger.info("Successfully got embedding from direct OpenAI API")
+            except Exception as e:
+                # logger.error(f"Direct OpenAI embedding failed: {e}")
+                pass
+        
+        # Final fallback: use the cached function if everything else fails
+        if not query_embedding:
+            # logger.warning("All embedding methods failed, falling back to cached function")
+            from app.routes.document_routes import get_cached_query_embedding
+            query_embedding = get_cached_query_embedding(search_query)
+        
+        # logger.info(f"Fresh query embedding obtained, length: {len(query_embedding) if query_embedding else 'None'}")
+        
+        # Add embedding hash for debugging
+        import hashlib
+        embedding_hash = hashlib.md5(str(query_embedding).encode()).hexdigest()
+        # logger.info(f"Embedding hash: {embedding_hash}")
+        
+        # if query_embedding:
+        #     logger.info(f"Embedding sample: {query_embedding[:5]}...{query_embedding[-5:]}")
+        
+        # 3. Perform similarity search with detailed logging
+        # logger.debug("Step 2: Performing similarity search...")
+        # logger.info(f"Vector store type: {type(vector_store)}")
+        # logger.info(f"Using filter: file_id in {documentIds}")
         
         if isinstance(vector_store, AsyncPgVector):
-            logger.debug("Using AsyncPgVector similarity search")
-            # Use the indexed custom_id column for efficient filtering
+            # logger.debug("Using AsyncPgVector similarity search")
+            
+            # DETAILED LOGGING: Check what's being passed to the vector store
+            filter_dict = {"file_id": {"$in": documentIds}}
+            # logger.info(f"=== VECTOR SEARCH PARAMETERS ===")
+            # logger.info(f"search_query: '{search_query}'")
+            # logger.info(f"query_embedding type: {type(query_embedding)}")
+            # logger.info(f"query_embedding length: {len(query_embedding) if query_embedding else 'None'}")
+            # logger.info(f"k parameter: {MAX_CHUNKS * 3}")
+            # logger.info(f"filter_dict: {filter_dict}")
+            # logger.info(f"filter_dict type: {type(filter_dict)}")
+            
+            # LOG: What method are we calling?
+            # logger.info(f"Calling: vector_store.similarity_search_with_score_by_vector()")
+            # logger.info(f"Method exists: {hasattr(vector_store, 'similarity_search_with_score_by_vector')}")
+            
+            # Try to get method signature info
+            try:
+                import inspect
+                method = getattr(vector_store, 'similarity_search_with_score_by_vector')
+                sig = inspect.signature(method)
+                # logger.info(f"Method signature: {sig}")
+            except Exception as e:
+                # logger.info(f"Could not get method signature: {e}")
+                pass
+            
+            # Make the call with detailed logging
+            # logger.info("=== CALLING VECTOR STORE METHOD ===")
             documents_with_scores = await run_in_executor(
                 None,
                 vector_store.similarity_search_with_score_by_vector,
                 query_embedding,
-                k=MAX_CHUNKS * 3,  # Get more initially for filtering
-                filter={"file_id": {"$in": documentIds}}
+                k=MAX_CHUNKS * 3,
+                filter=filter_dict
             )
+            
+            # logger.info(f"=== VECTOR SEARCH RESULTS ===")
+            # logger.info(f"Initial search returned {len(documents_with_scores)} documents")
+            
+            # LOG: What did we actually get back?
+            # logger.info(f"=== ANALYZING RETURNED DOCUMENTS ===")
+            returned_file_ids = {}
+            for idx, (doc, score) in enumerate(documents_with_scores):
+                file_id = doc.metadata.get('file_id', 'MISSING')
+                if file_id not in returned_file_ids:
+                    returned_file_ids[file_id] = 0
+                returned_file_ids[file_id] += 1
+                
+                # logger.info(f"Document {idx}:")
+                # logger.info(f"  file_id: '{file_id}'")
+                # logger.info(f"  score: {score}")
+                # logger.info(f"  content_length: {len(doc.page_content)}")
+                # logger.info(f"  content_start: {doc.page_content[:100]}...")
+                # logger.info(f"  metadata: {doc.metadata}")
+                # logger.info(f"  matches_filter: {file_id in documentIds}")
+                
+            # logger.info(f"=== SUMMARY OF RETURNED FILE_IDS ===")
+            # logger.info(f"Requested: {documentIds}")
+            # logger.info(f"Returned file_id counts: {returned_file_ids}")
+            
+            # Check if filter worked at all
+            expected_files = set(documentIds)
+            actual_files = set(returned_file_ids.keys())
+            
+            if expected_files.intersection(actual_files):
+                # logger.info(f"✅ PARTIAL FILTER SUCCESS: Found {len(expected_files.intersection(actual_files))} expected files")
+                pass
+            else:
+                # logger.error(f"❌ COMPLETE FILTER FAILURE: No expected files found")
+                # logger.error(f"Expected: {expected_files}")
+                # logger.error(f"Actual: {actual_files}")
+                pass
+                
+            # If filter completely failed, let's try to understand why
+            if not expected_files.intersection(actual_files):
+                # logger.info("=== DEBUGGING FILTER FAILURE ===")
+                
+                # Try different filter formats
+                # logger.info("Trying alternative filter format 1: direct equality")
+                if len(documentIds) == 1:
+                    alt_filter1 = {"file_id": documentIds[0]}
+                    # logger.info(f"Alternative filter 1: {alt_filter1}")
+                    
+                    try:
+                        alt_docs1 = await run_in_executor(
+                            None,
+                            vector_store.similarity_search_with_score_by_vector,
+                            query_embedding,
+                            k=10,
+                            filter=alt_filter1
+                        )
+                        # logger.info(f"Alternative filter 1 returned: {len(alt_docs1)} documents")
+                        
+                        if len(alt_docs1) > 0:
+                            # for idx, (doc, score) in enumerate(alt_docs1[:2]):
+                            #     logger.info(f"Alt1 Doc {idx}: file_id='{doc.metadata.get('file_id')}', score={score}")
+                            
+                            # Use alternative results if they work
+                            if alt_docs1[0][0].metadata.get('file_id') in documentIds:
+                                # logger.info("Using alternative filter results")
+                                documents_with_scores = alt_docs1
+                        
+                    except Exception as e:
+                        # logger.error(f"Alternative filter 1 failed: {e}")
+                        pass
+                
+                # Try no filter to see what's available
+                # logger.info("Trying no filter to see available documents")
+                try:
+                    no_filter_docs = await run_in_executor(
+                        None,
+                        vector_store.similarity_search_with_score_by_vector,
+                        query_embedding,
+                        k=10
+                    )
+                    # logger.info(f"No filter returned: {len(no_filter_docs)} documents")
+                    
+                    available_file_ids = set()
+                    for doc, score in no_filter_docs:
+                        file_id = doc.metadata.get('file_id')
+                        available_file_ids.add(file_id)
+                    
+                    # logger.info(f"Available file_ids in vector store: {list(available_file_ids)}")
+                    # logger.info(f"Target file_id exists: {documentIds[0] in available_file_ids}")
+                    
+                except Exception as e:
+                    # logger.error(f"No filter query failed: {e}")
+                    pass
+        
         else:
-            logger.debug("Using standard vector store similarity search")
+            # logger.debug("Using standard vector store similarity search")
+            filter_dict = {"file_id": {"$in": documentIds}}
+            
             documents_with_scores = vector_store.similarity_search_with_score_by_vector(
                 query_embedding,
                 k=MAX_CHUNKS * 3,
-                filter={"file_id": {"$in": documentIds}}
+                filter=filter_dict
             )
         
-        logger.info(f"Similarity search returned {len(documents_with_scores)} documents")
+        # logger.info(f"Final similarity search returned {len(documents_with_scores)} documents")
         
-        if not documents_with_scores:
-            logger.warning(f"No chunks found for project documentIds: {documentIds}")
-            logger.warning("This could mean:")
-            logger.warning("1. Documents weren't embedded with these custom_ids")
-            logger.warning("2. Vector store filter isn't working correctly")
-            logger.warning("3. Documents exist but don't match the query")
+        # 4. Validate results - ensure we only get requested documents
+        validated_documents = []
+        for idx, (doc, score) in enumerate(documents_with_scores):
+            file_id = doc.metadata.get('file_id')
+            if file_id in documentIds:
+                validated_documents.append((doc, score))
+                # logger.info(f"✅ Validated document {idx}: file_id='{file_id}', score={score}")
+            else:
+                # logger.warning(f"❌ Filtered out document {idx}: file_id='{file_id}' not in {documentIds}")
+                pass
+        
+        # logger.info(f"After validation: {len(validated_documents)} documents")
+        
+        if not validated_documents:
+            # logger.error(f"❌ NO VALID DOCUMENTS FOUND for project documentIds: {documentIds}")
+            # logger.error("This indicates the vector store filter is not working correctly")
             return []
         
-        # Log first few results for debugging
-        for i, (doc, score) in enumerate(documents_with_scores[:3]):
-            logger.debug(f"Document {i}: custom_id='{doc.metadata.get('custom_id', 'NOT_SET')}', "
-                        f"file_id='{doc.metadata.get('file_id', 'NOT_SET')}', "
-                        f"score={score}, content_length={len(doc.page_content)}")
-            logger.debug(f"Content preview: {doc.page_content[:100]}...")
+        # 5. Log final selected documents
+        # logger.info(f"=== FINAL VALIDATED DOCUMENTS ===")
+        # for idx, (doc, score) in enumerate(validated_documents):
+        #     logger.info(f"Final Doc {idx}:")
+        #     logger.info(f"  file_id: '{doc.metadata.get('file_id')}'")
+        #     logger.info(f"  score: {score}")
+        #     logger.info(f"  content_length: {len(doc.page_content)}")
+        #     logger.info(f"  content_preview: {doc.page_content[:200]}...")
         
-        # 3. Process and score chunks for chat suitability
-        logger.debug("Step 3: Processing and scoring chunks...")
+        # 6. Process and score chunks
+        # logger.debug("Step 3: Processing and scoring chunks...")
+        
         chat_chunks = []
         seen_content_hashes = set()
         length_filtered_count = 0
         duplicate_filtered_count = 0
         
-        for idx, (document, similarity_score) in enumerate(documents_with_scores):
+        for idx, (document, similarity_score) in enumerate(validated_documents):
             content = document.page_content
             metadata = document.metadata or {}
-            custom_id = metadata.get('custom_id', 'unknown')
             file_id = metadata.get('file_id', 'unknown')
             
-            logger.debug(f"Processing chunk {idx}: custom_id='{custom_id}', file_id='{file_id}', "
-                        f"content_length={len(content)}, similarity_score={similarity_score}")
+            # logger.debug(f"Processing chunk {idx}: file_id='{file_id}', content_length={len(content)}")
             
             # Filter by length
             if not (MIN_CHUNK_LENGTH <= len(content) <= MAX_CHUNK_LENGTH):
                 length_filtered_count += 1
-                logger.debug(f"Chunk {idx} filtered by length: {len(content)} not in range [{MIN_CHUNK_LENGTH}, {MAX_CHUNK_LENGTH}]")
+                # logger.debug(f"Chunk {idx} filtered by length: {len(content)} not in range [{MIN_CHUNK_LENGTH}, {MAX_CHUNK_LENGTH}]")
                 continue
             
             # Deduplicate based on content
             content_hash = get_content_hash(content)
             if content_hash in seen_content_hashes:
                 duplicate_filtered_count += 1
-                logger.debug(f"Chunk {idx} filtered as duplicate content")
+                # logger.debug(f"Chunk {idx} filtered as duplicate content")
                 continue
             seen_content_hashes.add(content_hash)
             
             # Calculate chat relevance score
             chat_score = calculate_chat_relevance_score(
                 content=content,
-                query=query,
+                query=query,  # Use original query for scoring
                 similarity_score=similarity_score
             )
             
-            logger.debug(f"Chunk {idx} scored: relevance_score={chat_score}")
+            # logger.debug(f"Chunk {idx} scored: relevance_score={chat_score}")
             
             chat_chunks.append({
                 "content": content,
                 "relevanceScore": chat_score,
-                "similarity_score": similarity_score,  # Keep for sorting
-                "custom_id": custom_id,
+                "similarity_score": similarity_score,
                 "file_id": file_id
             })
         
-        logger.info(f"Chunk processing summary:")
-        logger.info(f"  Total retrieved: {len(documents_with_scores)}")
-        logger.info(f"  Length filtered: {length_filtered_count}")
-        logger.info(f"  Duplicate filtered: {duplicate_filtered_count}")
-        logger.info(f"  Final chunks: {len(chat_chunks)}")
+        # logger.info(f"Chunk processing summary:")
+        # logger.info(f"  Total retrieved: {len(validated_documents)}")
+        # logger.info(f"  Length filtered: {length_filtered_count}")
+        # logger.info(f"  Duplicate filtered: {duplicate_filtered_count}")
+        # logger.info(f"  Final chunks: {len(chat_chunks)}")
         
         if not chat_chunks:
-            logger.warning("No chunks passed filtering! Check length and duplication filters.")
+            # logger.warning("No chunks passed filtering! Check length and duplication filters.")
             return []
         
-        # 4. Sort by relevance and select top chunks
-        logger.debug("Step 4: Sorting and selecting top chunks...")
+        # 7. Sort by relevance and select top chunks
+        # logger.debug("Step 4: Sorting and selecting top chunks...")
         chat_chunks.sort(key=lambda x: x["relevanceScore"], reverse=True)
         selected_chunks = chat_chunks[:MAX_CHUNKS]
         
-        logger.info(f"Selected {len(selected_chunks)} top chunks:")
-        for i, chunk in enumerate(selected_chunks):
-            logger.info(f"  Chunk {i}: relevance_score={chunk['relevanceScore']}, "
-                       f"custom_id='{chunk['custom_id']}', content_length={len(chunk['content'])}")
-            logger.debug(f"  Content preview: {chunk['content'][:100]}...")
+        # logger.info(f"=== FINAL SELECTED CHUNKS FOR LLM ===")
+        # for idx, chunk in enumerate(selected_chunks):
+        #     logger.info(f"Selected Chunk {idx}:")
+        #     logger.info(f"  file_id: '{chunk['file_id']}'")
+        #     logger.info(f"  relevance_score: {chunk['relevanceScore']}")
+        #     logger.info(f"  similarity_score: {chunk['similarity_score']}")
+        #     logger.info(f"  content_length: {len(chunk['content'])}")
+        #     logger.info(f"  content_preview: {chunk['content'][:200]}...")
+        #     logger.info(f"  content_end: ...{chunk['content'][-100:]}")
         
-        # 5. Format response (just content strings)
+        # 8. Format response (just content strings)
         result = [chunk["content"] for chunk in selected_chunks]
-        logger.info(f"=== PROJECT CHAT QUERY SUCCESS: Returning {len(result)} content strings ===")
+        
+        # Add final validation log
+        # logger.info(f"=== FINAL CONTENT BEING RETURNED TO LLM ===")
+        # for idx, content in enumerate(result):
+        #     content_hash = hashlib.md5(content.encode()).hexdigest()
+        #     logger.info(f"Result {idx}: hash={content_hash}, length={len(content)}")
+        #     logger.info(f"  Content start: {content[:150]}...")
+        #     logger.info(f"  Content end: ...{content[-150:]}")
+        
+        # logger.info(f"=== PROJECT CHAT QUERY SUCCESS: Returning {len(result)} content strings ===")
         return result
         
     except HTTPException:
-        logger.error("HTTPException in project_chat_query")
+        # logger.error("HTTPException in project_chat_query")
         raise
     except Exception as e:
-        logger.error(
-            "Error in project chat query | Document IDs: %s | Query: %s | Error: %s | Traceback: %s",
-            len(documentIds),
-            query[:100],
-            str(e),
-            traceback.format_exc(),
-        )
+        # logger.error(
+        #     "Error in project chat query | Document IDs: %s | Query: %s | Error: %s | Traceback: %s",
+        #     len(documentIds),
+        #     query[:100] if query else "empty",
+        #     str(e),
+        #     traceback.format_exc(),
+        # )
         raise HTTPException(status_code=500, detail=f"Project chat query failed: {str(e)}")
 
 
+# Helper function to get content hash for deduplication
+def get_content_hash(content: str) -> str:
+    """Generate a hash of normalized content for deduplication"""
+    import hashlib
+    # Normalize whitespace and case for better matching
+    normalized = " ".join(content.lower().split())
+    return hashlib.md5(normalized.encode()).hexdigest()
+
+
+# Helper function to calculate chat relevance score
 def calculate_chat_relevance_score(content: str, query: str, similarity_score: float) -> float:
     """
     Calculate relevance score specifically for chat responses.
     Combines semantic similarity with chat-specific factors.
     """
+    import re
     
     # Base score from semantic similarity (0.0 to 1.0, higher is better)
     # Note: similarity_score from vector search is distance (lower is better)
