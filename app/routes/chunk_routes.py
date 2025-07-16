@@ -443,9 +443,9 @@ async def project_chat_query(
     MAX_CHUNK_LENGTH = 1500
     
     # Enhanced relevance thresholds
-    SIMILARITY_THRESHOLD = 0.7  # Vector similarity threshold (lower = more similar for cosine distance)
-    RELEVANCE_THRESHOLD = 0.25  # Minimum relevance score (0.0-1.0)
-    KEYWORD_OVERLAP_THRESHOLD = 0.1  # Minimum keyword overlap ratio
+    SIMILARITY_THRESHOLD = 1.2  # Vector similarity threshold (increased to be less restrictive)
+    RELEVANCE_THRESHOLD = 0.20  # Minimum relevance score (slightly lowered)
+    KEYWORD_OVERLAP_THRESHOLD = 0.05  # Minimum keyword overlap ratio (lowered for broader matching)
     
     logger.info(f"=== PROJECT CHAT QUERY START ===")
     logger.info(f"Query: '{query}'")
