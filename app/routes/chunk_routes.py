@@ -86,11 +86,17 @@ async def process_document_chunks(
     
     search_query = query.strip()
     
-    logger.info(f"Processing document chunks:")
-    logger.info(f"  Query: '{search_query}'")
-    logger.info(f"  Document IDs: {document_ids}")
-    logger.info(f"  Max chunks: {max_chunks}")
-    logger.info(f"  Use FAQ scoring: {use_faq_scoring}")
+    logger.info(f"🚀 ===== DOCUMENT CHUNK PROCESSING START =====")
+    logger.info(f"  🔍 Query: '{search_query}'")
+    logger.info(f"  📁 Document IDs: {document_ids}")
+    logger.info(f"  ⚙️  Parameters:")
+    logger.info(f"    📊 Max chunks: {max_chunks}")
+    logger.info(f"    📏 Length range: {min_chunk_length}-{max_chunk_length}")
+    logger.info(f"    🎯 Similarity threshold: {similarity_threshold}")
+    logger.info(f"    🎲 Use FAQ scoring: {use_faq_scoring}")
+    if not use_faq_scoring:
+        logger.info(f"    📈 Relevance threshold: {relevance_threshold}")
+        logger.info(f"    🔤 Keyword overlap threshold: {keyword_overlap_threshold}")
     
     try:
         # 1. Get query embedding
@@ -241,25 +247,49 @@ def filter_by_similarity_threshold(documents_with_scores, document_ids: List[str
     validated_documents = []
     similarity_filtered_count = 0
     
+    logger.info(f"🔍 SIMILARITY THRESHOLD FILTERING:")
+    logger.info(f"  📊 Threshold: {similarity_threshold}")
+    logger.info(f"  📄 Target document IDs: {document_ids}")
+    logger.info(f"  📥 Input documents: {len(documents_with_scores)}")
+    
     for idx, (doc, similarity_score) in enumerate(documents_with_scores):
         file_id = doc.metadata.get('file_id')
         
+        logger.info(f"\n  📄 Document {idx+1}/{len(documents_with_scores)}:")
+        logger.info(f"    🆔 File ID: '{file_id}'")
+        logger.info(f"    📊 Similarity score: {similarity_score}")
+        logger.info(f"    📏 Content length: {len(doc.page_content)} chars")
+        logger.info(f"    📝 Content preview: '{doc.page_content[:150]}...'")
+        logger.info(f"    🗂️  Metadata: {doc.metadata}")
+        
         # Check if document belongs to project
         if file_id not in document_ids:
+            logger.info(f"    ❌ File ID not in target documents")
             continue
             
+        logger.info(f"    ✅ File ID matches target documents")
+        
         # Apply similarity threshold
         if similarity_score > similarity_threshold:
             similarity_filtered_count += 1
-            logger.debug(f"Document {idx} filtered by similarity: score={similarity_score} > threshold={similarity_threshold}")
+            logger.info(f"    ❌ Similarity filter: {similarity_score} > threshold {similarity_threshold}")
             continue
             
+        logger.info(f"    ✅ Similarity OK: {similarity_score} <= threshold {similarity_threshold}")
+        logger.info(f"    🎉 DOCUMENT ACCEPTED")
+        
         validated_documents.append((doc, similarity_score))
-        logger.debug(f"✅ Document {idx} passed similarity filter: file_id='{file_id}', score={similarity_score}")
     
-    logger.info(f"Similarity filtering: {len(validated_documents)} documents passed (filtered: {similarity_filtered_count})")
+    logger.info(f"\n📊 SIMILARITY FILTERING SUMMARY:")
+    logger.info(f"  📥 Input documents: {len(documents_with_scores)}")
+    logger.info(f"  ❌ Similarity filtered: {similarity_filtered_count}")
+    logger.info(f"  ✅ Passed documents: {len(validated_documents)}")
+    
+    if validated_documents:
+        scores = [score for _, score in validated_documents]
+        logger.info(f"  📈 Score range: {min(scores):.4f} - {max(scores):.4f}")
+    
     return validated_documents
-
 
 async def process_chunks_for_faq(validated_documents, min_chunk_length: int, max_chunk_length: int, 
                                 diversity_weight: float, max_chunks: int):
@@ -311,22 +341,33 @@ async def process_chunks_for_chat(validated_documents, query: str, min_chunk_len
     relevance_filtered_count = 0
     keyword_filtered_count = 0
     
+    logger.info(f"🔄 PROCESSING {len(validated_documents)} CHUNKS FOR CHAT:")
+    logger.info(f"  📊 Thresholds: relevance={relevance_threshold}, keyword_overlap={keyword_overlap_threshold}")
+    logger.info(f"  📏 Length limits: {min_chunk_length}-{max_chunk_length} chars")
+    
     for idx, (document, similarity_score) in enumerate(validated_documents):
         content = document.page_content
         metadata = document.metadata or {}
         file_id = metadata.get('file_id', 'unknown')
         
+        logger.info(f"\n  📄 CHUNK {idx+1}/{len(validated_documents)} (file: {file_id}):")
+        
         # Filter by length
         if not (min_chunk_length <= len(content) <= max_chunk_length):
             length_filtered_count += 1
+            logger.info(f"    ❌ Length filter: {len(content)} chars not in range [{min_chunk_length}, {max_chunk_length}]")
             continue
+        
+        logger.info(f"    ✅ Length OK: {len(content)} chars")
         
         # Deduplicate based on content
         content_hash = get_content_hash(content)
         if content_hash in seen_content_hashes:
             duplicate_filtered_count += 1
+            logger.info(f"    ❌ Duplicate filter: content hash {content_hash[:8]}...")
             continue
         seen_content_hashes.add(content_hash)
+        logger.info(f"    ✅ Unique content: hash {content_hash[:8]}...")
         
         # Calculate enhanced relevance score
         relevance_metrics = calculate_enhanced_chat_relevance_score(
@@ -338,16 +379,19 @@ async def process_chunks_for_chat(validated_documents, query: str, min_chunk_len
         # Apply relevance threshold
         if relevance_metrics["final_score"] < relevance_threshold:
             relevance_filtered_count += 1
-            logger.debug(f"Chunk {idx} filtered by relevance: score={relevance_metrics['final_score']} < threshold={relevance_threshold}")
+            logger.info(f"    ❌ Relevance filter: {relevance_metrics['final_score']:.4f} < {relevance_threshold}")
             continue
+        
+        logger.info(f"    ✅ Relevance OK: {relevance_metrics['final_score']:.4f} >= {relevance_threshold}")
         
         # Apply keyword overlap threshold
         if relevance_metrics["keyword_overlap"] < keyword_overlap_threshold:
             keyword_filtered_count += 1
-            logger.debug(f"Chunk {idx} filtered by keyword overlap: {relevance_metrics['keyword_overlap']} < threshold={keyword_overlap_threshold}")
+            logger.info(f"    ❌ Keyword filter: {relevance_metrics['keyword_overlap']:.4f} < {keyword_overlap_threshold}")
             continue
         
-        logger.debug(f"✅ Chunk {idx} passed all filters: relevance={relevance_metrics['final_score']}, keyword_overlap={relevance_metrics['keyword_overlap']}")
+        logger.info(f"    ✅ Keyword overlap OK: {relevance_metrics['keyword_overlap']:.4f} >= {keyword_overlap_threshold}")
+        logger.info(f"    🎉 CHUNK ACCEPTED with score: {relevance_metrics['final_score']:.4f}")
         
         chat_chunks.append({
             "id": f"{file_id}_{idx}",
@@ -360,13 +404,16 @@ async def process_chunks_for_chat(validated_documents, query: str, min_chunk_len
             "metrics": relevance_metrics
         })
     
-    logger.info(f"Chat chunk filtering summary:")
-    logger.info(f"  Total retrieved: {len(validated_documents)}")
-    logger.info(f"  Length filtered: {length_filtered_count}")
-    logger.info(f"  Duplicate filtered: {duplicate_filtered_count}")
-    logger.info(f"  Relevance filtered: {relevance_filtered_count}")
-    logger.info(f"  Keyword filtered: {keyword_filtered_count}")
-    logger.info(f"  Final chunks: {len(chat_chunks)}")
+    logger.info(f"\n📊 CHAT CHUNK FILTERING SUMMARY:")
+    logger.info(f"  📥 Total retrieved: {len(validated_documents)}")
+    logger.info(f"  📏 Length filtered: {length_filtered_count}")
+    logger.info(f"  🔄 Duplicate filtered: {duplicate_filtered_count}")
+    logger.info(f"  🎯 Relevance filtered: {relevance_filtered_count}")
+    logger.info(f"  🔤 Keyword filtered: {keyword_filtered_count}")
+    logger.info(f"  ✅ Final chunks: {len(chat_chunks)}")
+    
+    if chat_chunks:
+        logger.info(f"  🏆 Top scores: {[f'{chunk["relevanceScore"]:.3f}' for chunk in sorted(chat_chunks, key=lambda x: x['relevanceScore'], reverse=True)[:3]]}")
     
     # Sort by relevance and select top chunks
     chat_chunks.sort(key=lambda x: x["relevanceScore"], reverse=True)
@@ -714,8 +761,7 @@ def select_diverse_chunks(
 
 def calculate_enhanced_chat_relevance_score(content: str, query: str, similarity_score: float) -> Dict:
     """
-    Enhanced relevance scoring with detailed metrics for better filtering.
-    Returns a dictionary with individual scores and final combined score.
+    Generic relevance scoring that works for any content domain without hardcoded keywords.
     """
     import re
     
@@ -723,6 +769,7 @@ def calculate_enhanced_chat_relevance_score(content: str, query: str, similarity
     metrics = {
         "semantic_score": 0.0,
         "keyword_overlap": 0.0,
+        "contextual_relevance": 0.0,  # NEW: Generic contextual matching
         "exact_phrase_match": 0.0,
         "qa_indicators": 0.0,
         "completeness": 0.0,
@@ -733,89 +780,251 @@ def calculate_enhanced_chat_relevance_score(content: str, query: str, similarity
     query_lower = query.lower().strip()
     content_lower = content.lower()
     
+    logger.info(f"🔍 RELEVANCE SCORING DEBUG:")
+    logger.info(f"  Query: '{query}' -> '{query_lower}'")
+    logger.info(f"  Content length: {len(content)} chars")
+    logger.info(f"  Content preview: '{content[:200]}...'")
+    logger.info(f"  Similarity score: {similarity_score}")
+    
     # 1. Semantic similarity score (from vector search)
-    # Convert distance to similarity (lower distance = higher similarity)
     if similarity_score <= 1.0:
         metrics["semantic_score"] = max(0, 1.0 - similarity_score)
     else:
         metrics["semantic_score"] = 1.0 / (1.0 + similarity_score)
     
-    # 2. Keyword overlap (most important for relevance)
-    query_words = set(word.strip() for word in query_lower.split() if len(word.strip()) > 2)
-    content_words = set(word.strip() for word in content_lower.split() if len(word.strip()) > 2)
+    logger.info(f"  📊 Semantic score: {metrics['semantic_score']:.4f}")
+    
+    # 2. IMPROVED: Enhanced keyword overlap with better tokenization
+    def extract_meaningful_words(text: str) -> set:
+        """Extract meaningful words using improved filtering"""
+        # Remove punctuation and split
+        clean_text = re.sub(r'[^\w\s]', ' ', text)
+        words = clean_text.split()
+        
+        # Filter words more intelligently
+        meaningful_words = set()
+        for word in words:
+            word_lower = word.lower()
+            # Keep words that are:
+            # - Longer than 2 characters, OR
+            # - Important short words (numbers, currency, etc.)
+            if (len(word_lower) > 2 or 
+                re.match(r'^\d+$', word_lower) or  # Numbers
+                word_lower in {'is', 'it', 'we', 'do', 'ai', 'qa', 'ui', 'ux', 'id', 'us', 'or'}):  # Important short words
+                meaningful_words.add(word_lower)
+        
+        return meaningful_words
+    
+    query_words = extract_meaningful_words(query_lower)
+    content_words = extract_meaningful_words(content_lower)
+    
+    logger.info(f"  📝 Query words: {query_words}")
+    logger.info(f"  📄 Content words sample (first 25): {list(content_words)[:25]}")
     
     if query_words:
-        overlap_count = len(query_words.intersection(content_words))
+        overlapping_words = query_words.intersection(content_words)
+        overlap_count = len(overlapping_words)
         metrics["keyword_overlap"] = overlap_count / len(query_words)
+        
+        logger.info(f"  🎯 Overlapping words: {overlapping_words}")
+        logger.info(f"  📈 Keyword overlap: {overlap_count}/{len(query_words)} = {metrics['keyword_overlap']:.4f}")
     else:
         metrics["keyword_overlap"] = 0.0
     
-    # 3. Exact phrase matching (for multi-word queries)
+    # 3. NEW: Generic contextual relevance scoring
+    def calculate_contextual_relevance(query: str, content: str) -> float:
+        """
+        Calculate contextual relevance using generic linguistic patterns,
+        without domain-specific keywords.
+        """
+        score = 0.0
+        query_lower = query.lower()
+        content_lower = content.lower()
+        
+        # Extract query intent patterns (generic)
+        query_patterns = {
+            'question_words': re.findall(r'\b(what|how|why|when|where|who|which|is|are|can|do|does|will|would|should)\b', query_lower),
+            'action_words': re.findall(r'\b(get|find|need|want|help|show|tell|explain|describe)\b', query_lower),
+            'quantity_words': re.findall(r'\b(much|many|often|long|far|big|small|fast|slow)\b', query_lower),
+            'comparison_words': re.findall(r'\b(better|best|worse|different|same|compare|versus|vs)\b', query_lower),
+        }
+        
+        # Extract content structure patterns (generic)
+        content_patterns = {
+            'headings': len(re.findall(r'^[A-Z][^.!?]*$', content, re.MULTILINE)),  # Lines that look like headings
+            'lists': len(re.findall(r'^\s*[-•*]\s', content, re.MULTILINE)),  # Bullet points
+            'numbers': len(re.findall(r'\b\d+\b', content)),  # Numbers in content
+            'definitions': len(re.findall(r'\b(is|are|means|refers to|defined as|called)\b', content_lower)),
+            'procedures': len(re.findall(r'\b(step|first|then|next|finally|process|procedure)\b', content_lower)),
+            'explanations': len(re.findall(r'\b(because|since|therefore|thus|however|although)\b', content_lower)),
+        }
+        
+        # Calculate pattern alignment scores
+        alignment_scores = []
+        
+        # 1. Question-answer alignment
+        if query_patterns['question_words']:
+            if content_patterns['definitions'] > 0 or content_patterns['explanations'] > 0:
+                alignment_scores.append(0.8)
+            elif content_patterns['headings'] > 0:
+                alignment_scores.append(0.6)
+            else:
+                alignment_scores.append(0.3)
+        
+        # 2. Process/procedure alignment
+        if any(word in query_lower for word in ['how', 'steps', 'process', 'setup', 'install']):
+            if content_patterns['procedures'] > 2:
+                alignment_scores.append(0.9)
+            elif content_patterns['lists'] > 0:
+                alignment_scores.append(0.7)
+            else:
+                alignment_scores.append(0.2)
+        
+        # 3. Comparison/quantity alignment
+        if query_patterns['quantity_words'] or query_patterns['comparison_words']:
+            if content_patterns['numbers'] > 3:
+                alignment_scores.append(0.8)
+            elif content_patterns['lists'] > 1:
+                alignment_scores.append(0.6)
+            else:
+                alignment_scores.append(0.2)
+        
+        # 4. General information density
+        info_density = min((content_patterns['headings'] + content_patterns['numbers'] + 
+                           content_patterns['definitions']) / 10, 1.0)
+        alignment_scores.append(info_density)
+        
+        # Calculate final contextual score
+        if alignment_scores:
+            score = sum(alignment_scores) / len(alignment_scores)
+        else:
+            score = 0.5  # Neutral score if no patterns detected
+        
+        logger.info(f"  🧠 Query patterns: {query_patterns}")
+        logger.info(f"  📄 Content patterns: {content_patterns}")
+        logger.info(f"  🔗 Contextual relevance: {score:.4f}")
+        
+        return score
+    
+    metrics["contextual_relevance"] = calculate_contextual_relevance(query_lower, content)
+    
+    # 4. Exact phrase matching (improved)
     query_phrases = []
     if len(query.split()) > 1:
-        # Extract 2-3 word phrases from query
-        words = query_lower.split()
+        words = re.sub(r'[^\w\s]', ' ', query_lower).split()
+        # Create 2-3 word phrases
         for i in range(len(words) - 1):
             if i + 2 <= len(words):
-                query_phrases.append(' '.join(words[i:i+2]))
+                phrase = ' '.join(words[i:i+2])
+                if phrase.strip():
+                    query_phrases.append(phrase)
             if i + 3 <= len(words):
-                query_phrases.append(' '.join(words[i:i+3]))
+                phrase = ' '.join(words[i:i+3])
+                if phrase.strip():
+                    query_phrases.append(phrase)
     
-    exact_matches = sum(1 for phrase in query_phrases if phrase in content_lower)
+    # Remove punctuation from content for phrase matching
+    content_clean = re.sub(r'[^\w\s]', ' ', content_lower)
+    exact_matches = sum(1 for phrase in query_phrases if phrase in content_clean)
     metrics["exact_phrase_match"] = min(exact_matches / max(len(query_phrases), 1), 1.0) if query_phrases else 0.0
     
-    # 4. Question-answering indicators
+    logger.info(f"  🔤 Query phrases: {query_phrases}")
+    logger.info(f"  ✅ Exact phrase matches: {exact_matches}/{len(query_phrases) if query_phrases else 0} = {metrics['exact_phrase_match']:.4f}")
+    
+    # 5. Question-answering indicators (generic patterns)
     qa_patterns = [
         r'\b(what|why|how|when|where|who|which)\b',
         r'\b(is|are|can|should|must|will|does|do)\b',
-        r'\b(definition|meaning|purpose|explanation)\b',
-        r'\b(example|for instance|such as)\b',
-        r'\b(because|therefore|thus|hence|so)\b',
-        r'\b(first|second|third|finally|then|next)\b',
-        r'\b(important|key|main|primary|essential)\b'
+        r'\b(definition|meaning|purpose|explanation|description)\b',
+        r'\b(example|instance|such as|like|including)\b',
+        r'\b(because|therefore|thus|hence|so|since)\b',
+        r'\b(first|second|third|finally|then|next|step)\b',
+        r'\b(important|key|main|primary|essential|significant)\b'
     ]
     
-    qa_score = 0
-    for pattern in qa_patterns:
-        if re.search(pattern, content_lower):
-            qa_score += 1
+    qa_score = sum(1 for pattern in qa_patterns if re.search(pattern, content_lower))
     metrics["qa_indicators"] = min(qa_score / len(qa_patterns), 1.0)
     
-    # 5. Content completeness (for standalone answers)
+    logger.info(f"  ❓ QA pattern matches: {qa_score}/{len(qa_patterns)} = {metrics['qa_indicators']:.4f}")
+    
+    # 6. Content completeness (structural quality)
     completeness_indicators = [
         r'[.!?]\s+[A-Z]',  # Multiple sentences
-        r'\b(however|but|although|while)\b',  # Contrasting information
-        r'\b(additionally|furthermore|moreover|also)\b',  # Additional information
+        r'\b(however|but|although|while|moreover|furthermore)\b',  # Connective words
         r':\s*\n',  # Definitions or lists
-        r'\b\d+[.)]\s',  # Numbered lists
-        r'[•\-*]\s'  # Bullet points
+        r'^\s*\d+[.)]\s',  # Numbered lists
+        r'^\s*[•\-*]\s',  # Bullet points
+        r'\n\s*\n'  # Paragraph breaks
     ]
     
-    completeness_score = 0
-    for pattern in completeness_indicators:
-        if re.search(pattern, content):
-            completeness_score += 1
+    completeness_score = sum(1 for pattern in completeness_indicators if re.search(pattern, content, re.MULTILINE))
     metrics["completeness"] = min(completeness_score / len(completeness_indicators), 1.0)
     
-    # 6. Length penalty (optimal length for chat responses)
-    optimal_length = 400
+    logger.info(f"  📋 Completeness score: {completeness_score}/{len(completeness_indicators)} = {metrics['completeness']:.4f}")
+    
+    # 7. Length penalty (optimal range)
+    optimal_length = 600  # Slightly higher for more comprehensive content
     length_diff = abs(len(content) - optimal_length)
-    metrics["length_penalty"] = max(0.3, 1.0 - (length_diff / optimal_length))
+    metrics["length_penalty"] = max(0.4, 1.0 - (length_diff / optimal_length))
     
-    # 7. Calculate final score with emphasis on keyword relevance
-    weights = {
-        "semantic_score": 0.25,      # Vector similarity
-        "keyword_overlap": 0.35,     # Most important - direct relevance
-        "exact_phrase_match": 0.20,  # Phrase matching
-        "qa_indicators": 0.10,       # QA suitability
-        "completeness": 0.05,        # Content quality
-        "length_penalty": 0.05       # Length optimization
-    }
+    logger.info(f"  📏 Length penalty: {len(content)} chars, penalty: {metrics['length_penalty']:.4f}")
     
-    metrics["final_score"] = sum(
-        metrics[key] * weights[key] 
-        for key in weights.keys()
-    )
+    # 8. ADAPTIVE: Weighted scoring based on query characteristics
+    is_short_query = len(query.split()) <= 4
+    has_question_words = bool(re.search(r'\b(what|how|why|when|where|who|which)\b', query_lower))
+    
+    if is_short_query and not has_question_words:
+        # Short, direct queries - prioritize keyword matching
+        weights = {
+            "semantic_score": 0.25,
+            "keyword_overlap": 0.45,         # High importance for direct matches
+            "contextual_relevance": 0.15,    # Lower importance for simple queries
+            "exact_phrase_match": 0.10,
+            "qa_indicators": 0.03,
+            "completeness": 0.01,
+            "length_penalty": 0.01
+        }
+        logger.info(f"  🎯 Using SHORT DIRECT QUERY weights")
+    elif has_question_words:
+        # Question-based queries - prioritize contextual understanding
+        weights = {
+            "semantic_score": 0.20,
+            "keyword_overlap": 0.25,
+            "contextual_relevance": 0.30,    # High importance for questions
+            "exact_phrase_match": 0.15,
+            "qa_indicators": 0.07,
+            "completeness": 0.02,
+            "length_penalty": 0.01
+        }
+        logger.info(f"  🎯 Using QUESTION-BASED weights")
+    else:
+        # Complex queries - balanced approach
+        weights = {
+            "semantic_score": 0.25,
+            "keyword_overlap": 0.30,
+            "contextual_relevance": 0.25,
+            "exact_phrase_match": 0.12,
+            "qa_indicators": 0.05,
+            "completeness": 0.02,
+            "length_penalty": 0.01
+        }
+        logger.info(f"  🎯 Using BALANCED weights")
+    
+    logger.info(f"  ⚖️  Weights: {weights}")
+    
+    # Calculate weighted components
+    weighted_components = {}
+    for key in weights.keys():
+        weighted_components[key] = metrics[key] * weights[key]
+    
+    metrics["final_score"] = sum(weighted_components.values())
+    
+    logger.info(f"  🧮 Weighted components:")
+    for key, value in weighted_components.items():
+        logger.info(f"    {key}: {metrics[key]:.4f} × {weights[key]:.2f} = {value:.4f}")
+    
+    logger.info(f"  🎯 FINAL SCORE: {metrics['final_score']:.4f}")
+    logger.info(f"  🚪 Threshold check: {metrics['final_score']:.4f} >= {CHAT_RELEVANCE_THRESHOLD} ? {'✅ PASS' if metrics['final_score'] >= CHAT_RELEVANCE_THRESHOLD else '❌ FAIL'}")
     
     # Round scores for readability
     for key in metrics:
