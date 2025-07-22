@@ -412,8 +412,8 @@ async def process_chunks_for_chat(validated_documents, query: str, min_chunk_len
     logger.info(f"  🔤 Keyword filtered: {keyword_filtered_count}")
     logger.info(f"  ✅ Final chunks: {len(chat_chunks)}")
     
-    if chat_chunks:
-        logger.info(f"  🏆 Top scores: {[f'{chunk["relevanceScore"]:.3f}' for chunk in sorted(chat_chunks, key=lambda x: x['relevanceScore'], reverse=True)[:3]]}")
+    # if chat_chunks:
+    #     logger.info(f"  🏆 Top scores: {[f'{chunk["relevanceScore"]:.3f}' for chunk in sorted(chat_chunks, key=lambda x: x['relevanceScore'], reverse=True)[:3]]}")
     
     # Sort by relevance and select top chunks
     chat_chunks.sort(key=lambda x: x["relevanceScore"], reverse=True)
