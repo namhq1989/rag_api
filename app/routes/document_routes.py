@@ -259,11 +259,56 @@ async def store_data_in_vector_db(
     user_id: str = "",
     clean_content: bool = False,
     executor=None,
+    custom_chunk_size: int = None,
+    custom_chunk_overlap: int = None,
 ) -> bool:
+    """Enhanced chunking with customizable parameters for better content preservation"""
+    
+    # Use custom chunking parameters or fall back to config defaults
+    chunk_size = custom_chunk_size if custom_chunk_size is not None else CHUNK_SIZE
+    chunk_overlap = custom_chunk_overlap if custom_chunk_overlap is not None else CHUNK_OVERLAP
+    
+    logger.info(f"📄 DOCUMENT CHUNKING:")
+    logger.info(f"  🆔 File ID: {file_id}")
+    logger.info(f"  📏 Chunk size: {chunk_size}")
+    logger.info(f"  🔄 Chunk overlap: {chunk_overlap}")
+    
+    # Convert to list to avoid consuming iterator
+    if hasattr(data, '__iter__') and not isinstance(data, list):
+        data = list(data)
+    
+    logger.info(f"  📝 Input documents: {len(data)}")
+    
+    # Enhanced text splitter with better separators for structured content
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=[
+            "\n\n## ",    # Markdown H2 headers (high priority)
+            "\n\n### ",   # Markdown H3 headers
+            "\n\n#### ",  # Markdown H4 headers
+            "\n\n# ",     # Markdown H1 headers
+            "\n\n",       # Double newlines (paragraph breaks)
+            "\n",         # Single newlines
+            ". ",         # Sentence endings
+            ", ",         # Comma separators
+            " ",          # Spaces
+            ""            # Character-level fallback
+        ],
+        keep_separator=True,  # Keep separators to maintain structure
+        is_separator_regex=False,
     )
+    
     documents = text_splitter.split_documents(data)
+    
+    logger.info(f"  📊 Generated chunks: {len(documents)}")
+    
+    # Log chunk details for debugging
+    for i, doc in enumerate(documents[:5]):  # Log first 5 chunks
+        logger.info(f"  📄 Chunk {i+1}: {len(doc.page_content)} chars - '{doc.page_content[:100]}...'")
+    
+    if len(documents) > 5:
+        logger.info(f"  ... and {len(documents) - 5} more chunks")
 
     # If `clean_content` is True, clean the page_content of each document (remove null bytes)
     if clean_content:
@@ -278,20 +323,22 @@ async def store_data_in_vector_db(
                 "file_id": file_id,
                 "user_id": user_id,
                 "digest": generate_digest(doc.page_content),
+                "chunk_index": i,  # Add chunk index for ordering
                 **(doc.metadata or {}),
             },
         )
-        for doc in documents
+        for i, doc in enumerate(documents)
     ]
 
     try:
         if isinstance(vector_store, AsyncPgVector):
             ids = await vector_store.aadd_documents(
-                docs, ids=[file_id] * len(documents), executor=executor
+                docs, ids=[f"{file_id}_{i}" for i in range(len(documents))], executor=executor
             )
         else:
-            ids = vector_store.add_documents(docs, ids=[file_id] * len(documents))
+            ids = vector_store.add_documents(docs, ids=[f"{file_id}_{i}" for i in range(len(documents))])
 
+        logger.info(f"✅ Successfully stored {len(ids)} chunks in vector database")
         return {"message": "Documents added successfully", "ids": ids}
 
     except Exception as e:
@@ -377,7 +424,16 @@ async def embed_file(
     file_id: str = Form(...),
     file: UploadFile = File(...),
     entity_id: str = Form(None),
+    chunk_size: int = Form(600),  # NEW: Smaller default chunk size
+    chunk_overlap: int = Form(60),  # NEW: Smaller overlap
 ):
+    """
+    Enhanced embed endpoint with configurable chunking parameters.
+    
+    Args:
+        chunk_size: Size of each text chunk (default: 500 for better granularity)
+        chunk_overlap: Overlap between chunks (default: 50)
+    """
     response_status = True
     response_message = "File processed successfully."
     known_type = None
@@ -390,10 +446,16 @@ async def embed_file(
     os.makedirs(temp_base_path, exist_ok=True)
     temp_file_path = os.path.join(RAG_UPLOAD_DIR, user_id, file.filename)
 
+    logger.info(f"📤 EMBEDDING FILE:")
+    logger.info(f"  📁 File: {file.filename}")
+    logger.info(f"  🆔 File ID: {file_id}")
+    logger.info(f"  📏 Chunk size: {chunk_size}")
+    logger.info(f"  🔄 Chunk overlap: {chunk_overlap}")
+
     try:
         async with aiofiles.open(temp_file_path, "wb") as temp_file:
-            chunk_size = 64 * 1024  # 64 KB
-            while content := await file.read(chunk_size):
+            chunk_size_bytes = 64 * 1024  # 64 KB for file reading
+            while content := await file.read(chunk_size_bytes):
                 await temp_file.write(content)
     except Exception as e:
         logger.error(
@@ -422,6 +484,8 @@ async def embed_file(
             user_id=user_id,
             clean_content=file_ext == "pdf",
             executor=request.app.state.thread_pool,
+            custom_chunk_size=chunk_size,  # Use custom chunking
+            custom_chunk_overlap=chunk_overlap
         )
 
         if not result:
@@ -479,6 +543,7 @@ async def embed_file(
         "file_id": file_id,
         "filename": file.filename,
         "known_type": known_type,
+        "chunks_created": len(result.get("ids", [])) if result else 0,  # NEW: Report chunk count
     }
 
 
