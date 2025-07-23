@@ -165,54 +165,22 @@ async def get_enhanced_chunks_with_expansion(
 
 def generate_query_expansions(query: str) -> List[str]:
     """
-    Generate expanded search queries based on the original query.
-    Works generically without domain knowledge.
+    Generate 3 high-quality expanded search queries based on the original query.
+    Completely generic - works for any domain without assumptions.
     """
     import re
     
     query_lower = query.lower().strip()
-    query_words = [word.strip() for word in re.findall(r'\b\w+\b', query_lower) if len(word.strip()) > 2]
     
-    expansions = []
-    
-    # 1. Add common question words to the query
-    question_expansions = [
-        f"what are {query_lower}",
-        f"how do {query_lower} work",
-        f"about {query_lower}",
-        f"{query_lower} features",
-        f"{query_lower} details"
+    # Generate exactly 3 generic expansions
+    expansions = [
+        f"what are {query_lower}",      # Definition/explanation
+        f"how do {query_lower} work",   # Process/functionality
+        f"about {query_lower}"          # General information
     ]
-    expansions.extend(question_expansions)
     
-    # 2. Add related business/feature terms
-    if query_words:
-        for word in query_words:
-            related_expansions = [
-                f"{word} cost price",
-                f"{word} purchase buy",
-                f"{word} available options",
-                f"{word} include includes",
-                f"additional {word}"
-            ]
-            expansions.extend(related_expansions)
-    
-    # 3. Add common business context terms
-    business_expansions = [
-        f"{query_lower} subscription plan",
-        f"{query_lower} pricing cost",
-        f"purchase {query_lower}",
-        f"upgrade {query_lower}",
-        f"{query_lower} benefits"
-    ]
-    expansions.extend(business_expansions)
-    
-    # Remove duplicates and return first 5 expansions
-    unique_expansions = list(dict.fromkeys(expansions))[:5]
-    
-    logger.info(f"  Generated {len(unique_expansions)} query expansions: {unique_expansions}")
-    return unique_expansions
-
+    logger.info(f"  Generated 3 query expansions: {expansions}")
+    return expansions
 
 async def process_document_chunks(
     document_ids: List[str],

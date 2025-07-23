@@ -20,6 +20,9 @@ from fastapi import (
 from langchain_core.documents import Document
 from langchain_core.runnables import run_in_executor
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.runnables.config import run_in_executor
+from sqlalchemy.orm import Session
+from sqlalchemy import delete
 from functools import lru_cache
 
 from app.config import logger, vector_store, RAG_UPLOAD_DIR, CHUNK_SIZE, CHUNK_OVERLAP
@@ -128,20 +131,72 @@ async def get_documents_by_ids(request: Request, ids: list[str] = Query(...)):
 
 @router.delete("/documents")
 async def delete_documents(request: Request, document_ids: List[str] = Body(...)):
+    logger.info(
+        "Delete documents request initiated | IDs: %s | Count: %d",
+        document_ids,
+        len(document_ids)
+    )
+    
     try:
         if isinstance(vector_store, AsyncPgVector):
-            existing_ids = await vector_store.get_filtered_ids(
-                document_ids, executor=request.app.state.thread_pool
+            # Custom validation - check if file_ids exist in metadata (like get_filtered_ids but for file_id)
+            def validate_file_ids(ids: list[str]) -> list[str]:
+                with Session(vector_store._bind) as session:
+                    query = session.query(vector_store.EmbeddingStore.cmetadata['file_id'].astext).filter(
+                        vector_store.EmbeddingStore.cmetadata['file_id'].astext.in_(ids)
+                    )
+                    results = query.all()
+                    return [result[0] for result in results if result[0] is not None]
+            
+            # Custom deletion - delete by file_id in metadata (like _delete_multiple but for file_id)
+            def delete_by_file_ids(ids: list[str]) -> None:
+                with Session(vector_store._bind) as session:
+                    from sqlalchemy import delete
+                    stmt = delete(vector_store.EmbeddingStore).where(
+                        vector_store.EmbeddingStore.cmetadata['file_id'].astext.in_(ids)
+                    )
+                    session.execute(stmt)
+                    session.commit()
+            
+            from langchain_core.runnables.config import run_in_executor
+            
+            # Run validation in thread pool
+            existing_ids = await run_in_executor(
+                request.app.state.thread_pool, 
+                validate_file_ids, 
+                document_ids
             )
-            await vector_store.delete(
-                ids=document_ids, executor=request.app.state.thread_pool
+            
+            # Check if all requested IDs exist
+            if not all(id in existing_ids for id in document_ids):
+                raise HTTPException(status_code=404, detail="One or more IDs not found")
+            
+            # Run deletion in thread pool
+            await run_in_executor(
+                request.app.state.thread_pool, 
+                delete_by_file_ids, 
+                document_ids
             )
         else:
-            existing_ids = vector_store.get_filtered_ids(document_ids)
-            vector_store.delete(ids=document_ids)
-
-        if not all(id in existing_ids for id in document_ids):
-            raise HTTPException(status_code=404, detail="One or more IDs not found")
+            # Sync version - validate file_ids exist
+            with Session(vector_store._bind) as session:
+                query = session.query(vector_store.EmbeddingStore.cmetadata['file_id'].astext).filter(
+                    vector_store.EmbeddingStore.cmetadata['file_id'].astext.in_(document_ids)
+                )
+                results = query.all()
+                existing_ids = [result[0] for result in results if result[0] is not None]
+            
+            if not all(id in existing_ids for id in document_ids):
+                raise HTTPException(status_code=404, detail="One or more IDs not found")
+            
+            # Delete by file_id in metadata
+            with Session(vector_store._bind) as session:
+                from sqlalchemy import delete
+                stmt = delete(vector_store.EmbeddingStore).where(
+                    vector_store.EmbeddingStore.cmetadata['file_id'].astext.in_(document_ids)
+                )
+                session.execute(stmt)
+                session.commit()
 
         file_count = len(document_ids)
         return {
